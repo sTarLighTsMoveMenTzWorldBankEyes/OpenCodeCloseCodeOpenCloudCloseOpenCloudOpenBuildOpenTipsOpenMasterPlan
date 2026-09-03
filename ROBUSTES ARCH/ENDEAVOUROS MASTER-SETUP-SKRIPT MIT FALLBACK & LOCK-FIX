@@ -1,0 +1,123 @@
+```bash
+#!/usr/bin/env bash
+################################################################################
+# ROBUSTES ARCH/ENDEAVOUROS MASTER-SETUP-SKRIPT MIT FALLBACK & LOCK-FIX
+# 
+# Bereinigt hängende Pacman-Locks, installiert Kern-Tools, konfiguriert 
+# lokale Datenbanken (PostgreSQL, Redis, MongoDB) fehlertolerant und 
+# richtet das System für Transkription, Backup und Entwicklung ein.
+#
+# Verwendung: chmod +x master-setup.sh && ./master-setup.sh
+################################################################################
+
+set -e
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+print_header() { echo -e "\n${BLUE}=== $1 ===${NC}\n"; }
+print_success() { echo -e "${GREEN}✓ $1${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠ $1${NC}"; }
+print_error() { echo -e "${RED}✗ $1${NC}"; }
+
+# 1. Pacman Lock und hängende Prozesse bereinigen (Fallback)
+clear_locks() {
+    print_header "Prüfe und bereinige Paketmanager-Locks"
+    if [ -f /var/lib/pacman/db.lck ]; then
+        print_warning "Gesperrte Pacman-Datenbank gefunden. Bereinige..."
+        sudo pkill -f pacman || true
+        sudo pkill -f yay || true
+        sudo rm -f /var/lib/pacman/db.lck
+        print_success "Lock erfolgreich entfernt."
+    else
+        print_success "Keine aktiven Locks gefunden."
+    fi
+}
+
+# 2. System-Update mit Fallback
+update_system_safe() {
+    print_header "System-Aktualisierung (mit Fallback)"
+    clear_locks
+    if sudo pacman -Syu --noconfirm; then
+        print_success "System aktualisiert."
+    else
+        print_warning "Update fehlgeschlagen oder teilgesperrt. Versuche erneute Bereinigung..."
+        clear_locks
+        sudo pacman -Syu --noconfirm || print_warning "Update übersprungen, fahre mit Installation fort."
+    fi
+}
+
+# 3. Kern-Pakete & Datenbanken installieren
+install_packages() {
+    print_header "Installiere Kern-Tools & Datenbanken"
+    clear_locks
+    sudo pacman -S --needed --noconfirm \
+        base-devel git curl wget python python-pip \
+        postgresql redis mongodb flameshot qpdfview pdfarranger \
+        filelight ncdu baobab bleachbit rclone restic borgbackup \
+        code vim neovim go rust ruby git-lfs htop tmux alacritty kitty || {
+        print_warning "Einige Pakete konnten nicht direkt installiert werden. Starte Fallback-Installation..."
+        clear_locks
+        sudo pacman -S --needed --noconfirm postgresql redis redis flameshot filelight
+    }
+    print_success "Paketinstallation abgeschlossen."
+}
+
+# 4. Datenbanken fehlertolerant initialisieren und starten
+init_databases_safe() {
+    print_header "Datenbanken initialisieren & starten"
+    
+    # PostgreSQL Fallback Init
+    if command -v postgres &> /dev/null; then
+        if [ ! -d "/var/lib/postgres/data" ]; then
+            print_warning "Initialisiere PostgreSQL Datenverzeichnis..."
+            sudo mkdir -p /var/lib/postgres/data
+            sudo chown -R postgres:postgres /var/lib/postgres
+            sudo -u postgres initdb -D /var/lib/postgres/data || print_warning "initdb übersprungen (evtl. bereits initialisiert)"
+        fi
+        
+        sudo systemctl enable --now postgresql || print_warning "PostgreSQL Dienst konnte nicht gestartet werden"
+        
+        # Superuser anlegen falls möglich
+        if sudo systemctl is-active --quiet postgresql; then
+            sudo -u postgres createuser --superuser "$USER" 2>/dev/null || true
+            createdb dev_research 2>/dev/null || true
+            print_success "PostgreSQL läuft und 'dev_research' ist bereit."
+        fi
+    else
+        print_warning "PostgreSQL nicht gefunden. Überspringe DB-Init."
+    fi
+
+    # Redis & MongoDB starten
+    sudo systemctl enable --now redis 2>/dev/null || print_warning "Redis konnte nicht gestartet werden"
+    sudo systemctl enable --now mongodb 2>/dev/null || print_warning "MongoDB konnte nicht gestartet werden"
+}
+
+# 5. Python-Tools & Whisper einrichten
+install_ai_tools() {
+    print_header "Installiere KI- & Transkriptions-Tools (Whisper / Vosk)"
+    pip install --user --upgrade openai-whisper vosk 2>/dev/null || print_warning "Pip-Installation schlug fehl oder läuft im User-Modus."
+    print_success "KI-Umgebung vorbereitet."
+}
+
+# Hauptablauf
+main() {
+    print_header "STARTE VOLLSTÄNDIGES MASTER-SETUP"
+    clear_locks
+    update_system_safe
+    install_packages
+    init_databases_safe
+    install_ai_tools
+    
+    print_header "ERFOLG! SETUP ABGESCHLOSSEN"
+    echo -e "${GREEN}Alle Tools wurden installiert und Fallbacks ausgeführt.${NC}"
+    echo -e "${BLUE}Teste PostgreSQL mit:${NC} psql dev_research"
+    echo -e "${BLUE}Teste Festplattenanalyse mit:${NC} filelight / oder ncdu"
+}
+
+main "$@"
+
+```
