@@ -1,0 +1,93 @@
+#!/bin/bash
+# ============================================================
+#  EndeavourOS – Komplettes One-Script 2026
+#  Mit starkem Fallback-System gegen "keine Datenbank gefunden"
+# ============================================================
+
+set -e
+
+echo "=============================================="
+echo "  Starte robustes Setup für EndeavourOS..."
+echo "=============================================="
+
+# ---------- FALLBACK 1: Schlüsselring + Datenbanken ----------
+echo ">>> [1/7] Schlüsselring und Datenbanken reparieren..."
+sudo pacman-key --init 2>/dev/null || true
+sudo pacman-key --populate archlinux 2>/dev/null || true
+sudo pacman -Sy --noconfirm archlinux-keyring 2>/dev/null || true
+
+# ---------- FALLBACK 2: Mirrorliste erneuern ----------
+echo ">>> [2/7] Mirrorliste aktualisieren..."
+if ! command -v reflector &> /dev/null; then
+  sudo pacman -S --needed --noconfirm reflector 2>/dev/null || true
+fi
+sudo reflector --country Germany,Austria,Switzerland,France,Netherlands \
+  --latest 30 --protocol https --sort rate --save /etc/pacman.d/mirrorlist 2>/dev/null || true
+
+# ---------- FALLBACK 3: Force-Sync ----------
+echo ">>> [3/7] Force-Sync der Datenbanken..."
+sudo pacman -Syy --noconfirm 2>/dev/null || true
+sudo pacman -Syu --noconfirm 2>/dev/null || {
+  echo "Warnung: Normales Update fehlgeschlagen – versuche Notfall-Modus..."
+  sudo rm -f /var/lib/pacman/db.lck 2>/dev/null || true
+  sudo pacman -Syyu --noconfirm || true
+}
+
+# ---------- GRUNDPACKETE ----------
+echo ">>> [4/7] Grundpakete installieren..."
+sudo pacman -S --needed --noconfirm \
+  base-devel git wget curl flameshot qdirstat gdu restic timeshift \
+  syncthing flatpak 2>/dev/null || {
+  echo "Einige Pakete fehlgeschlagen – versuche einzeln..."
+  for pkg in base-devel git wget curl flameshot qdirstat gdu restic timeshift syncthing flatpak; do
+    sudo pacman -S --needed --noconfirm $pkg 2>/dev/null || true
+  done
+}
+
+# ---------- YAY (AUR) ----------
+echo ">>> [5/7] yay prüfen / installieren..."
+if ! command -v yay &> /dev/null; then
+  echo "yay wird installiert..."
+  cd /tmp
+  rm -rf yay 2>/dev/null || true
+  git clone https://aur.archlinux.org/yay.git
+  cd yay
+  makepkg -si --noconfirm
+  cd ~
+  rm -rf /tmp/yay
+else
+  echo "yay ist bereits vorhanden."
+fi
+
+# ---------- AUR-Pakete ----------
+echo ">>> [6/7] AUR-Pakete (Vorta + Pika Backup)..."
+yay -S --needed --noconfirm vorta pika-backup 2>/dev/null || {
+  echo "AUR-Installation teilweise fehlgeschlagen – versuche einzeln..."
+  yay -S --needed --noconfirm vorta 2>/dev/null || true
+  yay -S --needed --noconfirm pika-backup 2>/dev/null || true
+}
+
+# ---------- Flatpak ----------
+echo ">>> [7/7] Flatpak-Extras..."
+flatpak install -y flathub org.flameshot.Flameshot 2>/dev/null || true
+flatpak install -y flathub org.kde.filelight 2>/dev/null || true
+
+# ---------- Abschluss ----------
+echo ""
+echo "=============================================="
+echo "  Setup abgeschlossen!"
+echo "=============================================="
+echo ""
+echo "Installierte Tools:"
+echo "  • Flameshot (Screenshot)"
+echo "  • QDirStat + Filelight (TreeMap)"
+echo "  • gdu (schneller Disk-Analyzer)"
+echo "  • restic + Vorta + Pika Backup + Timeshift"
+echo "  • Syncthing"
+echo ""
+echo "Noch manuell zu installieren:"
+echo "  1. Sokuji  → https://github.com/kizuna-ai-lab/sokuji/releases"
+echo "  2. Meetily → git clone https://github.com/Zackriya-Solutions/meetily.git"
+echo ""
+echo "Viel Erfolg!"
+echo "=============================================="
